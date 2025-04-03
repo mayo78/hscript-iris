@@ -7,6 +7,7 @@ import crowplexus.iris.Iris;
 import crowplexus.hscript.Parser;
 import crowplexus.hscript.Printer;
 import crowplexus.hscript.Bytes;
+import haxe.Resource;
 
 using StringTools;
 
@@ -16,7 +17,10 @@ class Main {
 		// mainTest();
 		// mainBytes();
 		// testIndenticalNames();
-		testStringInterpolation();
+		// testStringInterpolation();
+		// fullTestParseEntireSourceCode();
+		// testUsing();
+		testBind();
 	}
 
 	/**
@@ -25,7 +29,7 @@ class Main {
 	static function mainTest() {
 		trace("Hello World!");
 
-		var myScript: Iris = new Iris(sys.io.File.getContent("./assets/test.hx"));
+		var myScript: Iris = new Iris(Resource.getString("assets/test.hx"));
 		myScript.execute();
 
 		var result = myScript.call("main"); // prints "Hello from Iris!"
@@ -59,7 +63,7 @@ class Main {
 	 * Test byte encoding.
 	**/
 	static function mainBytes() {
-		var myScript: Iris = new Iris(sys.io.File.getContent("./assets/bytes.hx"), {
+		var myScript: Iris = new Iris(Resource.getString("assets/bytes.hx"), {
 			autoRun: false,
 			autoPreset: false,
 			name: "bytes"
@@ -72,7 +76,6 @@ class Main {
 
 		// var printer = new Printer();
 		// trace(printer.exprToString(myScript.expr));
-		// fullTestParseEntireSourceCode()
 	}
 
 	/*
@@ -113,6 +116,21 @@ class Main {
 		}
 	}
 
+	/**
+	 * Test for HScript Using keyword
+	 */
+	static function testUsing() {
+		var myScript: Iris = new Iris(Resource.getString("assets/using.hx"), {
+			name: "using",
+			autoRun: false
+		});
+		myScript.execute();
+		myScript.call("main");
+	}
+
+	/**
+	 * Test for string interpolation in HScript.
+	**/
 	static function testStringInterpolation() {
 		function testFile() { // FILE TEST
 			trace('Testing String Interpolation, with a file');
@@ -146,9 +164,18 @@ class Main {
 			source.execute();
 			source.call("main", []);
 		}
+	}
 
-		testFile();
-		// testPureString();
+	/**
+	 * Test for Hscript - function.bind()
+	 */
+	static function testBind() {
+		var myScript: Iris = new Iris(Resource.getString("assets/bind.hx"), {
+			name: "bind",
+			autoRun: false
+		});
+		myScript.execute();
+		myScript.call("main");
 	}
 }
 

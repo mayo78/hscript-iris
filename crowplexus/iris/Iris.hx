@@ -1,11 +1,13 @@
 package crowplexus.iris;
 
+import haxe.CallStack;
 import crowplexus.iris.utils.Ansi;
 import crowplexus.hscript.proxy.ProxyType;
 import haxe.ds.StringMap;
 import crowplexus.hscript.*;
 import crowplexus.iris.ErrorSeverity;
 import crowplexus.iris.IrisConfig;
+import crowplexus.iris.utils.UsingEntry;
 
 using crowplexus.iris.utils.Ansi;
 
@@ -38,6 +40,38 @@ class Iris {
 	 * Map with stored instances of scripts.
 	**/
 	public static var instances: StringMap<Iris> = new StringMap<Iris>();
+
+	public static var registeredUsingEntries: Array<UsingEntry> = [
+		new UsingEntry("StringTools", function(o: Dynamic, f: String, args: Array<Dynamic>): Dynamic {
+			if (f == "isEof") // has @:noUsing
+				return null;
+			switch (Type.typeof(o)) {
+				case TInt if (f == "hex"):
+					return StringTools.hex(o, args[0]);
+				case TClass(String):
+					if (Reflect.hasField(StringTools, f)) {
+						var field = Reflect.field(StringTools, f);
+						if (Reflect.isFunction(field)) {
+							return Reflect.callMethod(StringTools, field, [o].concat(args));
+						}
+					}
+				default:
+			}
+			return null;
+		}),
+		new UsingEntry("Lambda", function(o: Dynamic, f: String, args: Array<Dynamic>): Dynamic {
+			if (Tools.isIterable(o)) {
+				// TODO: Check if the values are Iterable<T>
+				if (Reflect.hasField(Lambda, f)) {
+					var field = Reflect.field(Lambda, f);
+					if (Reflect.isFunction(field)) {
+						return Reflect.callMethod(Lambda, field, [o].concat(args));
+					}
+				}
+			}
+			return null;
+		}),
+	];
 
 	/**
 	 * Contains Classes/Enums that cannot be accessed via HScript.
@@ -236,6 +270,7 @@ class Iris {
 			expr = parse();
 
 		Iris.instances.set(this.name, this);
+		this.config.packageName = parser.packageName;
 		return interp.execute(expr);
 	}
 
@@ -338,7 +373,11 @@ class Iris {
 		#end
 		catch (e:haxe.Exception) {
 			var pos = isFunction ? this.interp.posInfos() : Iris.getDefaultPos(this.name);
-			Iris.error(Std.string(e), pos);
+			Iris.error(
+				Std.string(e)
+					#if IRIS_DEBUG + "\n" + CallStack.toString(CallStack.exceptionStack(true)) #end,
+				pos
+			);
 		}
 		// @formatter:on
 		return null;
@@ -384,5 +423,11 @@ class Iris {
 
 		Iris.instances.clear();
 		Iris.instances = new StringMap<Iris>();
+	}
+
+	public static function registerUsingGlobal(name: String, call: UsingCall): UsingEntry {
+		var entry = new UsingEntry(name, call);
+		Iris.registeredUsingEntries.push(entry);
+		return entry;
 	}
 }

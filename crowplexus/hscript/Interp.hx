@@ -22,12 +22,15 @@
 
 package crowplexus.hscript;
 
-import crowplexus.iris.Iris;
-import crowplexus.hscript.proxy.ProxyType;
-import haxe.PosInfos;
+import haxe.Constraints.Function;
+import Type.ValueType;
 import crowplexus.hscript.Expr;
 import crowplexus.hscript.Tools;
+import crowplexus.iris.Iris;
+import crowplexus.iris.IrisUsingClass;
+import crowplexus.iris.utils.UsingEntry;
 import haxe.Constraints.IMap;
+import haxe.PosInfos;
 
 private enum Stop {
 	SBreak;
@@ -58,7 +61,7 @@ class Interp {
 	public var variables: Hash<Dynamic>;
 	public var imports: Hash<Dynamic>;
 
-	var locals: Hash<{r: Dynamic}>;
+	var locals: Hash<LocalVar>;
 	var binops: Hash<Expr->Expr->Dynamic>;
 	#end
 
@@ -367,7 +370,6 @@ class Interp {
 
 	inline function warn(e: #if hscriptPos ErrorDef #else Error #end): Dynamic {
 		#if hscriptPos var e = new Error(e, curExpr.pmin, curExpr.pmax, curExpr.origin, curExpr.line); #end
-
 		Iris.warn(Printer.errorToString(e, showPosOnLog), #if hscriptPos posInfos() #else null #end);
 		return null;
 	}
@@ -471,19 +473,54 @@ class Interp {
 						null;
 				}
 			case ECall(e, params):
-				var args = new Array();
-				for (p in params)
-					args.push(expr(p));
-
 				switch (Tools.expr(e)) {
 					case EField(e, f, s):
-						var obj = expr(e);
-						if (obj == null)
-							if (!s)
-								error(EInvalidAccess(f));
-						return fcall(obj, f, args);
+						var obj: Dynamic = expr(e);
+
+						if (obj == null) {
+							if (s == true)
+								return null;
+							error(EInvalidAccess(f));
+						}
+
+						if (f == "bind" && Reflect.isFunction(obj)) {
+							var obj: Function = obj;
+							if (params.length == 0) { // Special case for function.bind()
+								return Reflect.makeVarArgs(function(ar: Array<Dynamic>) {
+									return obj();
+								});
+							}
+
+							// bind(_, false) => function(a1) return obj(a1, false);
+							// bind(false, _) => function(a2) return obj(false, a2);
+							// bind(_, _) => function(a1, a2) return obj(a1, a2);
+
+							var totalNeeded = 0;
+							var args = [];
+							for (p in params) {
+								switch (Tools.expr(p)) {
+									case EIdent(_):
+										args.push(null);
+										totalNeeded++;
+									default:
+										args.push(p);
+								}
+							}
+							var me = this;
+							// TODO: make it increment the depth?
+							return Reflect.makeVarArgs(function(ar: Array<Dynamic>) {
+								if (ar.length < totalNeeded)
+									error(ECustom("Too few arguments")); // TODO: make it say like "Not enough arguments, expected a:Int"
+								var i = 0;
+								var actualArgs = [for (a in args) if (a != null) me.expr(a) else ar[i++]];
+								return Reflect.callMethod(null, obj, actualArgs);
+							});
+						}
+
+						return fcall(obj, f, [for (p in params) expr(p)]);
 					default:
-						return call(null, expr(e), args);
+						var field = expr(e);
+						return call(null, field, [for (p in params) expr(p)]);
 				}
 			case EIf(econd, e1, e2):
 				return if (expr(econd) == true) expr(e1) else if (e2 == null) null else expr(e2);
@@ -504,7 +541,7 @@ class Interp {
 				returnValue = e == null ? null : expr(e);
 				throw SReturn;
 			case EImport(v, as):
-				final aliasStr = (as != null ? " named as " + as : ""); // for errors
+				final aliasStr = (as != null ? " named " + as : ""); // for errors
 				if (Iris.blocklistImports.contains(v)) {
 					error(ECustom("You cannot add a blacklisted import, for class " + v + aliasStr));
 					return null;
@@ -757,6 +794,8 @@ class Interp {
 				variables.set(enumName, obj);
 			case EDirectValue(value):
 				return value;
+			case EUsing(name):
+				useUsing(name);
 		}
 		return null;
 	}
@@ -882,11 +921,11 @@ class Interp {
 	}
 
 	inline function getMapValue(map: Dynamic, key: Dynamic): Dynamic {
-		return cast(map, haxe.Constraints.IMap<Dynamic, Dynamic>).get(key);
+		return cast(map, IMap<Dynamic, Dynamic>).get(key);
 	}
 
 	inline function setMapValue(map: Dynamic, key: Dynamic, value: Dynamic): Void {
-		cast(map, haxe.Constraints.IMap<Dynamic, Dynamic>).set(key, value);
+		cast(map, IMap<Dynamic, Dynamic>).set(key, value);
 	}
 
 	function get(o: Dynamic, f: String): Dynamic {
@@ -913,7 +952,114 @@ class Interp {
 		return v;
 	}
 
+	/**
+	 * Meant for people to add their own usings.
+	**/
+	function registerUsingLocal(name: String, call: UsingCall): UsingEntry {
+		var entry = new UsingEntry(name, call);
+		usings.push(entry);
+		return entry;
+	}
+
+	function useUsing(name: String): Void {
+		for (us in Iris.registeredUsingEntries) {
+			if (us.name == name) {
+				if (usings.indexOf(us) == -1)
+					usings.push(us);
+				return;
+			}
+		}
+
+		var cls = Tools.getClass(name);
+		if (cls != null) {
+			var fieldName = '__irisUsing_' + StringTools.replace(name, ".", "_");
+			if (Reflect.hasField(cls, fieldName)) {
+				var fields = Reflect.field(cls, fieldName);
+				if (fields == null)
+					return;
+
+				var entry = new UsingEntry(name, function(o: Dynamic, f: String, args: Array<Dynamic>): Dynamic {
+					if (!fields.exists(f))
+						return null;
+					var type: ValueType = Type.typeof(o);
+					var valueType: ValueType = fields.get(f);
+
+					// If we figure out a better way to get the types as the real ValueType, we can use this instead
+					// if (Type.enumEq(valueType, type))
+					//	return Reflect.callMethod(cls, Reflect.field(cls, f), [o].concat(args));
+
+					var canCall = valueType == null ? true : switch (valueType) {
+						case TEnum(null):
+							type.match(TEnum(_));
+						case TClass(null):
+							type.match(TClass(_));
+						case TClass(IMap): // if we don't check maps like this, it just doesn't work
+							type.match(TClass(IMap) | TClass(haxe.ds.ObjectMap) | TClass(haxe.ds.StringMap) | TClass(haxe.ds.IntMap) | TClass(haxe.ds.EnumValueMap));
+						default:
+							Type.enumEq(type, valueType);
+					}
+
+					return canCall ? Reflect.callMethod(cls, Reflect.field(cls, f), [o].concat(args)) : null;
+				});
+
+				#if IRIS_DEBUG
+				trace("Registered macro based using entry for " + name);
+				#end
+
+				Iris.registeredUsingEntries.push(entry);
+				usings.push(entry);
+				return;
+			}
+
+			// Use reflection to generate the using entry
+			var entry = new UsingEntry(name, function(o: Dynamic, f: String, args: Array<Dynamic>): Dynamic {
+				if (!Reflect.hasField(cls, f))
+					return null;
+				var field = Reflect.field(cls, f);
+				if (!Reflect.isFunction(field))
+					return null;
+
+				// invalid if the function has no arguments
+				var totalArgs = Tools.argCount(field);
+				if (totalArgs == 0)
+					return null;
+
+				// todo make it check if the first argument is the correct type
+
+				return Reflect.callMethod(cls, field, [o].concat(args));
+			});
+
+			#if IRIS_DEBUG
+			trace("Registered reflection based using entry for " + name);
+			#end
+
+			Iris.registeredUsingEntries.push(entry);
+			usings.push(entry);
+			return;
+		}
+		warn(ECustom("Unknown using class " + name));
+	}
+
+	/**
+	 * List of components that allow using static methods on objects.
+	 * This only works if you do
+	 * ```haxe
+	 * var result = "Hello ".trim();
+	 * ```
+	 * and not
+	 * ```haxe
+	 * var trim = "Hello ".trim;
+	 * var result = trim();
+	 * ```
+	 */
+	var usings: Array<UsingEntry> = [];
+
 	function fcall(o: Dynamic, f: String, args: Array<Dynamic>): Dynamic {
+		for (_using in usings) {
+			var v = _using.call(o, f, args);
+			if (v != null)
+				return v;
+		}
 		return call(o, get(o, f), args);
 	}
 

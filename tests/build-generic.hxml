@@ -19,4 +19,9 @@
 # Enables the analyzer optimizer
 --define analyzer-optimize
 
+--resource assets/using.hx@assets/using.hx
+--resource assets/bytes.hx@assets/bytes.hx
+--resource assets/test.hx@assets/test.hx
+--resource assets/bind.hx@assets/bind.hx
+
 ../extraParams.hxml

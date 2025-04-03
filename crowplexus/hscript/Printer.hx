@@ -311,14 +311,9 @@ class Printer {
 					expr(e);
 				}
 			case EImport(v, as):
-				var n: Dynamic = cast(Type.resolveClass(v)) ?? cast(Type.resolveEnum(v));
-				if (n == null)
-					return;
 				add("import " + v);
 				if (as != null)
 					add(" as " + as);
-
-			// expr(e);
 			case EArray(e, index):
 				expr(e);
 				add("[");
@@ -463,6 +458,9 @@ class Printer {
 				add("}");
 			case EDirectValue(value):
 				add("<Internal Value " + value + ">");
+			case EUsing(name):
+				add("using ");
+				add(name);
 		}
 	}
 
