@@ -802,9 +802,14 @@ class Interp {
 		if (v.iterator != null)
 			v = v.iterator();
 		#else
+		#if debug
+		if (v != null && v.iterator != null)
+			v = v.iterator();
+		#else
 		try
 			v = v.iterator()
 		catch (e:Dynamic) {};
+		#end
 		#end
 		if (v.hasNext == null || v.next == null)
 			error(EInvalidIterator(v));
