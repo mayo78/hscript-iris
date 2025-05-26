@@ -161,7 +161,7 @@ class Interp {
 		assignOp("??" + "=", function(v1, v2) return v1 == null ? v2 : v1);
 	}
 
-	public inline function setVar(name: String, v: Dynamic) {
+	public function setVar(name: String, v: Dynamic) {
 		variables.set(name, v);
 	}
 
